@@ -1,42 +1,46 @@
-# 📉 price-monitor
+# 📉 Price Monitor
 
 ![CI](https://github.com/zxcbecause/price-monitor/actions/workflows/ci.yml/badge.svg)
 
-Service that tracks product prices on **Wildberries** and **Ozon**, keeps price history and sends a **Telegram alert** when a price drops below your target or falls sharply.
+Сервис следит за ценами товаров на **Wildberries** и **Ozon**, хранит историю цен и присылает уведомление в **Telegram**, когда цена падает до нужной отметки или резко снижается.
 
-Built as an event-driven Spring Boot app: every price change is published to **Kafka**, so alerts, analytics or repricing can be added as independent consumers.
+Приложение построено на событиях: каждое изменение цены публикуется в **Kafka**. Поэтому уведомления, аналитику или автоматическое изменение своих цен можно добавлять отдельными обработчиками, не трогая основной код.
 
-## How it works
+## Зачем он нужен
+
+Продавцу на маркетплейсе важно вовремя видеть, что конкурент снизил цену, а покупателю — не пропустить скидку на нужный товар. Проверять это руками каждый день долго. Сервис делает это сам: раз в 15 минут проходит по списку товаров и пишет в Telegram только тогда, когда есть повод.
+
+## Как это работает
 
 ```
-             ┌──────────────┐   every 15 min    ┌────────────────────┐
-  REST API ─▶│  PostgreSQL  │◀──────────────────│  PriceCheckService │──▶ WB / Ozon API
-             │ products,    │   save snapshot   └─────────┬──────────┘
-             │ history      │                             │ price changed
+             ┌──────────────┐  каждые 15 минут  ┌────────────────────┐
+  REST API ─▶│  PostgreSQL  │◀──────────────────│  PriceCheckService │──▶ API WB / Ozon
+             │ товары,      │  сохранить цену   └─────────┬──────────┘
+             │ история цен  │                             │ цена изменилась
              └──────────────┘                             ▼
                                                  Kafka: price-changes
                                                           │
                                                           ▼
                                              PriceAlertListener + AlertPolicy
-                                                          │ target reached / big drop
+                                                          │ цель достигнута / сильное падение
                                                           ▼
                                                     Telegram Bot API
 ```
 
-- **Scheduler** checks all active products (`monitor.check-interval`, default 15 min). One broken product never stops the others.
-- **History**: every check is stored as a snapshot; `/history` and `/stats` endpoints expose it.
-- **Events**: a `PriceChangedEvent` is published on every change, keyed by product id (ordering per product is preserved).
-- **Alert policy**: notify when the price is at/below the target, or dropped by ≥ N % in one step (per product or global default).
-- **Money** is stored in kopecks (`long`) — no floating point errors.
+- **Планировщик** проверяет все активные товары (интервал задаётся в `monitor.check-interval`, по умолчанию 15 минут). Если один товар не удалось проверить, остальные проверяются как обычно.
+- **История цен.** Каждая проверка сохраняется в базу. Эндпоинты `/history` и `/stats` отдают историю и статистику.
+- **События.** При каждом изменении цены в Kafka уходит `PriceChangedEvent`. Ключ сообщения — id товара, поэтому события одного товара всегда приходят по порядку.
+- **Правила уведомлений.** Уведомление приходит, если цена стала не выше целевой или упала за одну проверку на N % и больше. Порог можно задать для каждого товара отдельно или оставить общий.
+- **Деньги** хранятся в копейках (`long`), без ошибок округления дробных чисел.
 
-## Stack
+## Стек
 
-Java 21 · Spring Boot 3.5 · Spring Data JPA · PostgreSQL · Flyway · Spring Kafka · RestClient · springdoc OpenAPI · Testcontainers · Docker Compose · GitHub Actions
+Java 21 · Spring Boot 3.5 · Spring Data JPA · PostgreSQL · Flyway · Spring Kafka · RestClient · Swagger (springdoc) · Testcontainers · Docker Compose · GitHub Actions
 
-## Run
+## Запуск
 
 ```bash
-# optional: real Telegram alerts
+# по желанию: настоящие уведомления в Telegram
 export TELEGRAM_BOT_TOKEN=123:abc
 export TELEGRAM_CHAT_ID=123456789
 
@@ -45,20 +49,20 @@ docker compose up --build
 
 Swagger UI: http://localhost:8080/swagger-ui.html
 
-Without a bot token alerts are written to the log, so the app works with zero setup.
+Без токена бота уведомления просто пишутся в лог, так что приложение запускается без какой-либо настройки.
 
 ## API
 
-| Method | Path | Description |
+| Метод | Путь | Что делает |
 |---|---|---|
-| `POST` | `/api/products` | Start tracking a product |
-| `GET` | `/api/products` | List tracked products |
-| `GET` | `/api/products/{id}` | One product with current price |
-| `PATCH` | `/api/products/{id}` | Change target / threshold, pause tracking |
-| `DELETE` | `/api/products/{id}` | Stop tracking (history is removed too) |
-| `POST` | `/api/products/{id}/check` | Check the price right now |
-| `GET` | `/api/products/{id}/history` | Price history |
-| `GET` | `/api/products/{id}/stats` | Min / max / current |
+| `POST` | `/api/products` | Начать отслеживать товар |
+| `GET` | `/api/products` | Список отслеживаемых товаров |
+| `GET` | `/api/products/{id}` | Товар и его текущая цена |
+| `PATCH` | `/api/products/{id}` | Изменить целевую цену или порог, поставить на паузу |
+| `DELETE` | `/api/products/{id}` | Перестать отслеживать (история тоже удаляется) |
+| `POST` | `/api/products/{id}/check` | Проверить цену прямо сейчас |
+| `GET` | `/api/products/{id}/history` | История цен |
+| `GET` | `/api/products/{id}/stats` | Минимальная, максимальная и текущая цена |
 
 ```bash
 curl -X POST localhost:8080/api/products \
@@ -66,7 +70,7 @@ curl -X POST localhost:8080/api/products \
   -d '{"marketplace":"WILDBERRIES","sku":"123456789","targetPrice":1500,"dropThresholdPercent":15}'
 ```
 
-Alert example:
+Пример уведомления:
 
 ```
 📉 Цена снизилась: Кроссовки беговые
@@ -76,22 +80,40 @@ Wildberries · арт. 123456789
 https://www.wildberries.ru/catalog/123456789/detail.aspx
 ```
 
-## Marketplaces
+Ошибки возвращаются в формате RFC 7807 (Problem Details): `400` при неверных данных, `404` если товара нет, `409` если товар уже отслеживается, `502` если маркетплейс не ответил.
 
-| Marketplace | Source | Notes |
+## Маркетплейсы
+
+| Маркетплейс | Откуда берётся цена | Примечание |
 |---|---|---|
-| Wildberries | public card API | no keys needed, `sku` = article (nm) |
-| Ozon | Seller API `/v5/product/info/prices` | needs `OZON_CLIENT_ID` / `OZON_API_KEY`, `sku` = `product_id` of your store |
+| Wildberries | публичный API карточек | ключи не нужны, `sku` — артикул WB |
+| Ozon | Seller API `/v5/product/info/prices` | нужны `OZON_CLIENT_ID` и `OZON_API_KEY`, `sku` — `product_id` товара вашего магазина |
 
-Adding a marketplace = one new `MarketplaceClient` bean.
+Чтобы добавить новый маркетплейс, достаточно написать ещё один бин `MarketplaceClient`.
 
-## Tests
+## Структура
+
+```
+api/            REST-контроллер, DTO, обработка ошибок
+config/         настройки monitor.*, включение планировщика
+domain/         сущности, репозитории, работа с деньгами
+marketplace/    клиенты Wildberries и Ozon
+monitoring/     проверка цен, планировщик, правила уведомлений
+messaging/      публикация событий в Kafka и их обработка
+notification/   отправка сообщений в Telegram
+```
+
+## Тесты
 
 ```bash
 mvn verify
 ```
 
-- unit tests for alert policy, money handling, WB / Ozon response parsing, message format;
-- integration test on real **PostgreSQL + Kafka in Testcontainers**: REST → check → DB → Kafka → listener → notification.
+- юнит-тесты: правила уведомлений, работа с деньгами, разбор ответов WB и Ozon, текст уведомления;
+- интеграционный тест на настоящих **PostgreSQL и Kafka в Testcontainers**: проходит весь путь REST → проверка цены → база → Kafka → обработчик → уведомление.
 
-Docker must be running for the integration test.
+Для интеграционного теста должен быть запущен Docker. В GitHub Actions тесты гоняются на каждый пуш.
+
+## Автор
+
+Turdaly Dias · GitHub [@zxcbecause](https://github.com/zxcbecause) · Telegram @zxcbecause
