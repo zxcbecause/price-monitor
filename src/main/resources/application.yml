@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: price-monitor
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/prices}
+    username: ${DB_USER:prices}
+    password: ${DB_PASSWORD:prices}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.value.default.type: io.github.zxcbecause.pricemonitor.monitoring.PriceChangedEvent
+        spring.json.use.type.headers: false
+
+monitor:
+  check-interval: ${CHECK_INTERVAL:PT15M}
+  default-drop-threshold-percent: 10
+  topic: price-changes
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    default-chat-id: ${TELEGRAM_CHAT_ID:}
+  ozon:
+    client-id: ${OZON_CLIENT_ID:}
+    api-key: ${OZON_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
